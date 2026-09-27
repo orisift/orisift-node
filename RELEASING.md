@@ -14,6 +14,21 @@ most leave a tarball awaiting approval. None of them can ship code to anybody
 who runs `npm install`. There is no npm token in this repository, in its
 secrets, or on anybody's laptop.
 
+## Status
+
+Trusted publishing is **proven end to end**, on `1.1.1`, 27 September 2026:
+
+    GitHub Actions OIDC  ->  npm staging queue  ->  human 2FA approval
+                         ->  publication        ->  verified provenance
+
+No npm publishing token exists, and none was used. The provenance attestation
+resolves to this repository, `.github/workflows/publish.yml`, the tag
+`refs/tags/v1.1.1` and commit `6c340f9bb22852f4f229bcd2fda59fc90ff8e885`, on a
+GitHub-hosted runner. `npm audit signatures` reports a verified attestation.
+
+`1.1.0` has no provenance. It was published interactively before the trusted
+publisher existed, which is the one exception described below.
+
 ## Bootstrap: done, kept for the record
 
 **1.1.0 was published on 27 September 2026 and this section is history.** It is
@@ -102,27 +117,42 @@ it live is four commands from a terminal signed in to npm.
 ```bash
 npm login                       # browser flow, then 2FA
 npm stage list                  # what is waiting, with its stage id
-npm stage view <stage-id>       # the file list and metadata of that exact tarball
+npm stage view <stage-id>       # metadata for that stage, including its shasum
 npm stage approve <stage-id>    # prompts for 2FA, then it is live
 npm logout
 ```
 
-**Look at `npm stage view` before approving.** It prints the contents of the
-tarball that would go out. That is the whole reason this step exists: it is the
-one moment where a human sees what is about to reach other people's machines,
-and approving without reading it turns the control back into a formality.
+**Check the shasum before approving.** `npm stage view` returns a metadata
+summary, not the contents of the tarball: the stage id, package name, version,
+dist-tag, who staged it, the shasum, the access level and the status. An earlier
+version of this document said it printed the file list and told you to read it.
+It does not, and that instruction could not be followed.
 
-Check three things, because they are what an attacker would change and what a
-mistake would show up in:
+The `shasum` field is the check, and it is a stronger one than reading a file
+list would have been. It is the SHA-1 of the exact tarball that would be
+published, so comparing it against the artifact that was reviewed settles the
+question of whether the bytes are the same bytes. A file list can match while the
+contents differ; a hash cannot.
 
+```bash
+# In the reviewed checkout, from the tarball the release was approved on:
+npm pack
+sha1sum orisift-sdk-<version>.tgz     # must equal the shasum npm shows
+```
+
+Four things are worth reading in that summary, because they are what a mistake or
+an attacker would change:
+
+- The **shasum** equals the reviewed artifact's. This is the one that matters.
 - The **version** is the one you intended, and matches the tag you pushed.
-- The **file list** is the eleven files this package ships: `package.json`,
-  `README.md`, `LICENSE`, and eight under `dist/`. Anything else is a reason to
-  reject. The count changes when a source module is added or removed, so check it
-  against the release rather than against this sentence; CI asserts the exact
-  list and will fail before anything is staged.
-- The **unpacked size** is in the region of 40 kB. A jump means something was
-  added.
+- **Staged by** says `GitHub Actions (trusted automation)`. Anything else means
+  something other than the workflow put it there.
+- **Access** is `public`, and **status** is `staged` rather than already live.
+
+The file list and unpacked size are still worth knowing, and CI asserts both
+before anything is staged: the exact eleven paths this package ships, and that
+`SDK_VERSION` matches the manifest. That check runs in the workflow, so a drift
+fails the run rather than reaching this step.
 
 To discard instead:
 
