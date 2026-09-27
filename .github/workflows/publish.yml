@@ -1,0 +1,107 @@
+name: Publish to npm
+
+# Publishing is a deliberate act, not a consequence of merging.
+#
+# A tag triggers it, and the tag has to agree with package.json before anything
+# is sent. workflow_dispatch is here so a failed run can be repeated without
+# inventing a tag, and it publishes the same checked-out commit.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+# The whole point of trusted publishing: no npm token exists anywhere in this
+# repository or its secrets. `id-token: write` lets the runner ask GitHub for a
+# short-lived OIDC token, npm verifies it came from this workflow in this
+# repository, and the credential dies with the job.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Only GitHub-hosted runners can issue an OIDC token npm will accept. A
+    # self-hosted runner fails authentication, so this must not be changed to
+    # one without also going back to a token.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # npm's trusted publishing requires npm CLI 11.5.1 or later and
+          # Node 22.14.0 or later ON THE RUNNER. That is a requirement of the
+          # publishing mechanism and has nothing to do with what the package
+          # supports, which is Node 20.19 and later. Pinned to the minimum that
+          # satisfies it rather than to "22", so a future 22.x that somehow
+          # regressed below the floor would fail here instead of at publish.
+          node-version: "22.14"
+          registry-url: "https://registry.npmjs.org"
+
+      # `npm install -g npm@latest` alone is an instruction, not a check: it can
+      # succeed and still leave a CLI older than the one OIDC needs, and the
+      # failure would then appear at `npm publish` as an authentication error
+      # that says nothing about versions. Install a floor, then verify it.
+      - name: Install and verify an npm that supports trusted publishing
+        run: |
+          npm install -g "npm@>=11.5.1"
+          NPM_VERSION="$(npm --version)"
+          NODE_VERSION="$(node --version)"
+          echo "npm $NPM_VERSION on node $NODE_VERSION"
+          node -e '
+            const [npmV, nodeV] = [process.argv[1], process.versions.node];
+            const ge = (a, b) => {
+              const x = a.split(".").map(Number), y = b.split(".").map(Number);
+              for (let i = 0; i < 3; i++) {
+                if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+              }
+              return true;
+            };
+            if (!ge(npmV, "11.5.1")) {
+              console.error(`npm ${npmV} is below 11.5.1, which trusted publishing requires.`);
+              process.exit(1);
+            }
+            if (!ge(nodeV, "22.14.0")) {
+              console.error(`node ${nodeV} is below 22.14.0, which trusted publishing requires.`);
+              process.exit(1);
+            }
+            console.log("npm and node both satisfy the trusted-publishing minimums.");
+          ' "$NPM_VERSION"
+
+      - run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      - name: The tag must match the version being published
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Tag v$TAG does not match package.json version $PKG."
+            echo "Publishing them apart would put a version on npm that no tag points at."
+            exit 1
+          fi
+          echo "Tag and manifest agree on $PKG."
+
+      - name: Refuse to publish a version that already exists
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already on npm. Versions are immutable; bump it."
+            exit 1
+          fi
+          echo "$NAME@$VERSION is not yet published."
+
+      - name: What would be published
+        run: npm pack --dry-run
+
+      # No NODE_AUTH_TOKEN. The npm CLI detects the OIDC environment and
+      # authenticates with it. Provenance comes from publishConfig, and is only
+      # generated because this repository is public.
+      - name: Publish
+        run: npm publish

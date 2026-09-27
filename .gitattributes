@@ -1,0 +1,27 @@
+# Line endings, so that a checksum of this package means something.
+#
+# This repository is checked out with core.autocrlf=true and had no attributes
+# file, so the working tree ended up mixed: files written by tooling kept LF,
+# files git checked out were converted to CRLF, and `git archive` converted
+# everything to CRLF on export. Three trees from one commit, with three
+# different sets of bytes.
+#
+# The consequence was not cosmetic. The tarball's SHA-256 depended on which of
+# those trees it was packed from, which means it identified a directory rather
+# than a commit, and approving a package by its checksum quietly proved nothing.
+#
+# `text eol=lf` normalises every text file to LF in the repository and in the
+# working tree on every platform, so a build from a fresh clone on Windows,
+# macOS or a Linux runner produces the same archive. That is what makes the
+# published artifact checkable against what was reviewed.
+#
+# Nothing here changes behaviour: Node, npm and TypeScript read either ending.
+* text=auto eol=lf
+
+# Binary, and must never be converted.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.tgz binary
+*.zip binary
