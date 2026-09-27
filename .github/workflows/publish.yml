@@ -38,7 +38,19 @@ jobs:
           # future 22.x that somehow regressed below the floor would fail here
           # rather than at staging time.
           node-version: "22.14"
-          registry-url: "https://registry.npmjs.org"
+          # No registry-url, deliberately.
+          #
+          # setup-node writes `_authToken=${NODE_AUTH_TOKEN}` into an .npmrc
+          # whenever registry-url is set. With no token secret, which is the
+          # whole point of trusted publishing, that expands to an empty string,
+          # npm decides authentication is already configured, and skips the OIDC
+          # exchange. The first attempt at this release failed that way: the
+          # provenance statement was signed and published to the transparency
+          # log, and then the registry returned E401 on a token that was never
+          # there.
+          #
+          # npmjs.org is the default registry, so dropping it changes nothing
+          # else.
 
       # `npm install -g npm@latest` alone is an instruction, not a check: it can
       # succeed and still leave a CLI older than the one OIDC needs, and the
@@ -72,6 +84,28 @@ jobs:
             }
             console.log("npm and node both satisfy the trusted-publishing minimums.");
           ' "$NPM_VERSION"
+
+      # Fail on the cause rather than the symptom.
+      #
+      # If anything ever puts an auth token back into an .npmrc, npm will use it
+      # instead of OIDC and the run will die at the last step with "your
+      # authentication token seems to be invalid", which describes a token that
+      # does not exist and points at npm login. This says what is actually
+      # wrong, before a tarball is built and a provenance statement is signed.
+      - name: No npmrc auth token may exist, or OIDC is bypassed
+        run: |
+          FOUND=0
+          for f in "$RUNNER_TEMP/.npmrc" "$HOME/.npmrc" ".npmrc"; do
+            if [ -f "$f" ] && grep -q "_authToken" "$f"; then
+              echo "$f contains an _authToken line, which disables trusted publishing."
+              FOUND=1
+            fi
+          done
+          if [ "$FOUND" = "1" ]; then
+            echo "Remove it, or remove registry-url from actions/setup-node."
+            exit 1
+          fi
+          echo "No _authToken anywhere. npm will use OIDC."
 
       - run: npm ci --ignore-scripts
 
