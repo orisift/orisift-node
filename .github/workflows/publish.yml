@@ -1,4 +1,4 @@
-name: Publish to npm
+name: Stage a release for approval
 
 # Publishing is a deliberate act, not a consequence of merging.
 #
@@ -31,22 +31,25 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # npm's trusted publishing requires npm CLI 11.5.1 or later and
-          # Node 22.14.0 or later ON THE RUNNER. That is a requirement of the
-          # publishing mechanism and has nothing to do with what the package
-          # supports, which is Node 20.19 and later. Pinned to the minimum that
-          # satisfies it rather than to "22", so a future 22.x that somehow
-          # regressed below the floor would fail here instead of at publish.
+          # Staged publishing requires Node 22.14.0 or later ON THE RUNNER.
+          # That is a requirement of the publishing mechanism and has nothing to
+          # do with what the package supports, which is Node 20 and later.
+          # Pinned to the minimum that satisfies it rather than to "22", so a
+          # future 22.x that somehow regressed below the floor would fail here
+          # rather than at staging time.
           node-version: "22.14"
           registry-url: "https://registry.npmjs.org"
 
       # `npm install -g npm@latest` alone is an instruction, not a check: it can
       # succeed and still leave a CLI older than the one OIDC needs, and the
-      # failure would then appear at `npm publish` as an authentication error
+      # failure would then appear at publish time as an authentication error
       # that says nothing about versions. Install a floor, then verify it.
-      - name: Install and verify an npm that supports trusted publishing
+      #
+      # 11.15.0, not 11.5.1: trusted publishing needs 11.5.1, but `npm stage
+      # publish` needs 11.15.0, and this workflow stages rather than publishes.
+      - name: Install and verify an npm that supports staged publishing
         run: |
-          npm install -g "npm@>=11.5.1"
+          npm install -g "npm@>=11.15.0"
           NPM_VERSION="$(npm --version)"
           NODE_VERSION="$(node --version)"
           echo "npm $NPM_VERSION on node $NODE_VERSION"
@@ -59,8 +62,8 @@ jobs:
               }
               return true;
             };
-            if (!ge(npmV, "11.5.1")) {
-              console.error(`npm ${npmV} is below 11.5.1, which trusted publishing requires.`);
+            if (!ge(npmV, "11.15.0")) {
+              console.error(`npm ${npmV} is below 11.15.0, which staged publishing requires.`);
               process.exit(1);
             }
             if (!ge(nodeV, "22.14.0")) {
@@ -100,8 +103,32 @@ jobs:
       - name: What would be published
         run: npm pack --dry-run
 
+      # Stage, do not publish.
+      #
+      # The trusted publisher for this package is configured with direct
+      # publishing disabled, so this workflow can put a tarball into the staging
+      # queue and nothing else. Making it live is a separate act performed by a
+      # maintainer with 2FA, which no CI token can do.
+      #
+      # That is the point rather than an inconvenience. A compromised Action, a
+      # malicious pull request that edits this file, or a stolen GitHub session
+      # can at most leave a tarball awaiting approval. None of them can ship
+      # code to anybody who runs `npm install`.
+      #
       # No NODE_AUTH_TOKEN. The npm CLI detects the OIDC environment and
-      # authenticates with it. Provenance comes from publishConfig, and is only
+      # authenticates with it. Provenance comes from publishConfig, and is
       # generated because this repository is public.
-      - name: Publish
-        run: npm publish
+      - name: Stage the release for approval
+        run: npm stage publish
+
+      - name: What is now waiting for a human
+        if: success()
+        run: |
+          npm stage list || true
+          echo ""
+          echo "Staged. It is not live and nobody can install it yet."
+          echo "Approve it from a terminal signed in to npm:"
+          echo "  npm stage list"
+          echo "  npm stage view <stage-id>"
+          echo "  npm stage approve <stage-id>   # prompts for 2FA"
+          echo "or discard it with: npm stage reject <stage-id>"

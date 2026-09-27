@@ -2,11 +2,30 @@
 
 ## The shape of it
 
-Publishing is triggered by a tag and authenticated by OIDC. There is no npm
-token in this repository, in its secrets, or on anybody's laptop after the
-bootstrap below is finished.
+A tag stages a release. A person makes it live.
 
-## Bootstrap, once only
+The trusted publisher for this package has **direct publishing disabled**, so
+the workflow can put a tarball into npm's staging queue and nothing else.
+Promoting it requires a 2FA challenge that no CI credential can answer.
+
+That division is the security property, not a formality. A compromised Action,
+a pull request that edits the workflow file, or a stolen GitHub session can at
+most leave a tarball awaiting approval. None of them can ship code to anybody
+who runs `npm install`. There is no npm token in this repository, in its
+secrets, or on anybody's laptop.
+
+## Bootstrap: done, kept for the record
+
+**1.1.0 was published on 27 September 2026 and this section is history.** It is
+left here because the sequence is not obvious and would have to be rediscovered
+if the package were ever republished under a different name.
+
+The one-time exception was that a trusted publisher can only be configured on a
+package that already exists, so the first publish could not use OIDC. It used an
+interactive login and a 2FA challenge rather than an access token, and the
+session was ended immediately afterwards. That release carries no provenance,
+because provenance is generated from a CI OIDC token and a local publish cannot
+produce one. Every release staged by the workflow does carry it.
 
 Trusted publishing can only be configured for a package that already exists on
 npm, so the first publish is the one exception and uses a token. The order
@@ -60,6 +79,8 @@ no reason.
 
 ## Every release after that
 
+### What CI does
+
 ```bash
 # 1. Decide the version, and say why in the changelog entry.
 npm version patch        # or minor, or major
@@ -67,9 +88,56 @@ npm version patch        # or minor, or major
 git push --follow-tags
 ```
 
-The workflow then builds, checks that the tag and `package.json` agree, refuses
-to republish a version that already exists, prints the file list, and publishes
-with provenance. Nothing is published if any of those fail.
+The workflow builds, checks that the tag and `package.json` agree, refuses a
+version that already exists, prints the file list, and **stages** the release
+with provenance. Nothing is staged if any of those fail, and nothing is live
+even when they all pass.
+
+### What you do
+
+Staging is silent as far as users are concerned: `npm install` still gets the
+previous version, and the staged tarball is visible only to maintainers. Making
+it live is four commands from a terminal signed in to npm.
+
+```bash
+npm login                       # browser flow, then 2FA
+npm stage list                  # what is waiting, with its stage id
+npm stage view <stage-id>       # the file list and metadata of that exact tarball
+npm stage approve <stage-id>    # prompts for 2FA, then it is live
+npm logout
+```
+
+**Look at `npm stage view` before approving.** It prints the contents of the
+tarball that would go out. That is the whole reason this step exists: it is the
+one moment where a human sees what is about to reach other people's machines,
+and approving without reading it turns the control back into a formality.
+
+Check three things, because they are what an attacker would change and what a
+mistake would show up in:
+
+- The **version** is the one you intended, and matches the tag you pushed.
+- The **file list** is the nine files this package ships: `package.json`,
+  `README.md`, `LICENSE`, and six under `dist/`. Anything else is a reason to
+  reject.
+- The **unpacked size** is in the region of 40 kB. A jump means something was
+  added.
+
+To discard instead:
+
+```bash
+npm stage reject <stage-id>
+```
+
+Rejecting is cheap and leaves no trace on the registry. A version number is not
+consumed by a rejected stage, so the same version can be staged again once
+whatever was wrong is fixed.
+
+### Why approval cannot be automated
+
+`npm stage approve` requires an interactive 2FA challenge and will not accept an
+OIDC token, so there is no way to wire it into CI even by accident. If a future
+change appears to automate it, that change is either wrong or is quietly
+re-enabling direct publishing, and it should be refused on sight.
 
 ## Versioning
 
