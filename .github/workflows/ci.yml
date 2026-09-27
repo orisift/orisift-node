@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Both ends of what the package claims to support.
+    #
+    # 22 is the current LTS and what new integrations should build on. 20 is the
+    # floor `engines` declares, and it is here because a floor nothing tests is
+    # a guess: this repository once could not build standalone at all, having
+    # only ever been compiled inside a repository that happened to have
+    # TypeScript at its root, and nobody noticed until it was built somewhere
+    # else. A matrix is the cheapest way to stop that recurring.
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22"]
+
+    runs-on: ubuntu-latest
+    name: Node ${{ matrix.node }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack, and check the file list has not drifted
+        run: |
+          npm pack --dry-run
+          FILES="$(npm pack --dry-run --json | node -e "
+            let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>{
+              const files = JSON.parse(s)[0].files.map(f=>f.path).sort();
+              console.log(files.join(' '));
+            });
+          ")"
+          EXPECTED="LICENSE README.md dist/errors.d.ts dist/errors.js dist/index.d.ts dist/index.js dist/retry-after.d.ts dist/retry-after.js dist/types.d.ts dist/types.js package.json"
+          if [ "$FILES" != "$EXPECTED" ]; then
+            echo "The published file list changed."
+            echo "  expected: $EXPECTED"
+            echo "  actual:   $FILES"
+            exit 1
+          fi
+          echo "Eleven files, as expected."
+
+      - name: Both module systems resolve from the packed tarball
+        run: |
+          # Against the tarball rather than the source tree, because the exports
+          # map is what consumers meet and it is not exercised by a local build.
+          npm pack --silent
+          mkdir -p /tmp/consumer && cd /tmp/consumer
+          echo '{"name":"consumer","version":"1.0.0"}' > package.json
+          npm install "$GITHUB_WORKSPACE"/orisift-sdk-*.tgz --silent
+
+          echo 'const { Orisift, SDK_VERSION } = require("@orisift/sdk");
+                if (typeof Orisift !== "function") { throw new Error("require: no Orisift export"); }
+                console.log("require ok, version " + SDK_VERSION);' > t.cjs
+
+          echo 'import { Orisift, SDK_VERSION } from "@orisift/sdk";
+                if (typeof Orisift !== "function") { throw new Error("import: no Orisift export"); }
+                console.log("import ok, version " + SDK_VERSION);' > t.mjs
+
+          # `require` of an ES module needs 20.19 or 22.12. On an older 20 the
+          # import path must still work, so the two are asserted separately
+          # rather than as one pass or fail.
+          node t.mjs
+          if node -e 'const [maj,min]=process.versions.node.split(".").map(Number); process.exit((maj>22||(maj===22&&min>=12)||(maj===20&&min>=19))?0:1)'; then
+            node t.cjs
+          else
+            echo "Skipping require(): this Node predates unflagged require(esm)."
+          fi
+
+      - name: The version in the code matches the manifest
+        run: |
+          # SDK_VERSION is sent as X-Orisift-Client, so a mismatch corrupts usage
+          # data in a way nobody would notice from the outside.
+          PKG="$(node -p "require('./package.json').version")"
+          SRC="$(grep -oE 'SDK_VERSION = "[^"]+"' src/index.ts | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+          if [ "$PKG" != "$SRC" ]; then
+            echo "package.json says $PKG, src/index.ts says $SRC."
+            exit 1
+          fi
+          echo "Both say $PKG."

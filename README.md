@@ -2,7 +2,13 @@
 
 Official TypeScript SDK for Orisift. **Server-side only.**
 
-Node 20 or later. No runtime dependencies.
+No runtime dependencies.
+
+**Build on Node 22 LTS or later.** That is the current supported line. The
+package installs on Node 20 and later so an existing integration is not locked
+out by an upgrade, but [Node 20 reached end of life in March 2026](https://nodejs.org/en/about/previous-releases)
+and receives no security fixes, so it is a compatibility floor rather than a
+recommendation. Continuous integration builds and exercises the package on Node 20 and Node 22, so the floor is tested rather than assumed.
 
 Both module systems work, from the same file:
 
@@ -15,6 +21,19 @@ const { Orisift } = require("@orisift/sdk"); // Node 20.19+ or 22.12+
 22.12 onwards. `import` works on every Node this package supports. The floor in
 `engines` is the lower of the two, because refusing to install for someone whose
 `import` works perfectly would be the wrong trade.
+
+## Getting a key
+
+1. Create an account at [orisift.com/signup](https://orisift.com/signup). A new
+   account starts with free credits, and no card is required to try it.
+2. Create a key in the [dashboard](https://orisift.com/app). It is shown once
+   and only a hash is stored, so a lost key is rotated rather than recovered.
+3. Keep it server-side. Anyone holding the key can spend the account's credits.
+
+The full API reference, including the response shape, the reason-code catalogue
+and the coverage limits, is at [orisift.com/docs](https://orisift.com/docs). The
+section covering this package is at
+[orisift.com/docs#sdk](https://orisift.com/docs#sdk).
 
 ## Quick start
 

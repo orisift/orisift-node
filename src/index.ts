@@ -1,3 +1,4 @@
+import { parseRetryAfter } from "./retry-after.js";
 import {
   OrisiftAbortedError, OrisiftAuthError, OrisiftBrowserError, OrisiftConfigError,
   OrisiftConnectionError, OrisiftError, OrisiftIdempotencyConflictError,
@@ -14,7 +15,7 @@ export * from "./types.js";
 export * from "./errors.js";
 
 /** Sent as X-Orisift-Client so deprecations can be planned against real usage. */
-export const SDK_VERSION = "1.1.0";
+export const SDK_VERSION = "1.1.1";
 
 const DEFAULT_BASE_URL = "https://orisift.com";
 
@@ -275,7 +276,7 @@ export class Orisift {
 
       if (res.ok) return payload as unknown as LookupResponse;
 
-      const error = toError(res.status, requestId, payload);
+      const error = toError(res.status, requestId, payload, retryAfterSeconds(res));
 
       /*
        * A 200 carrying retry_later is NOT retried here. That is an application
@@ -311,14 +312,17 @@ export class Orisift {
   }
 }
 
+/** The `Retry-After` header on this response, in seconds, or null. */
 function retryAfterSeconds(res: Response): number | null {
-  const header = res.headers.get("retry-after");
-  if (!header) return null;
-  const seconds = Number(header);
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+  return parseRetryAfter(res.headers.get("retry-after"));
 }
 
-function toError(status: number, requestId: string | null, payload: Record<string, unknown> | null): OrisiftError {
+function toError(
+  status: number,
+  requestId: string | null,
+  payload: Record<string, unknown> | null,
+  retryAfter: number | null = null,
+): OrisiftError {
   const error = (payload?.error ?? {}) as Record<string, unknown>;
   const message = typeof error.message === "string" ? error.message : `Orisift returned HTTP ${status}.`;
   const code = typeof error.type === "string" ? error.type : null;
@@ -335,7 +339,24 @@ function toError(status: number, requestId: string | null, payload: Record<strin
     case 409: return new OrisiftIdempotencyConflictError(message, base);
     case 422: return new OrisiftUnrecognisedInputError(message, base);
     case 429: return new OrisiftRateLimitError(message, {
-      ...base, retryAfterSeconds: typeof error.retry_after === "number" ? error.retry_after : null,
+      ...base,
+      /*
+       * Body first, then the header.
+       *
+       * Orisift's own 429 carries `retry_after` in the JSON body and repeats it
+       * in the header, so either source works against this API. A 429 from
+       * anywhere else in the path, a CDN or an edge limiter, sends the header
+       * and a body that is not our JSON at all, and the body-only read then
+       * reported null while the server had plainly said how long to wait.
+       *
+       * The header is already parsed for backoff; this makes the same value
+       * visible to a caller inspecting the error. Still null when the server
+       * provided nothing, because a number invented here would be indis-
+       * tinguishable from one the service actually asked for.
+       */
+      retryAfterSeconds: typeof error.retry_after === "number"
+        ? error.retry_after
+        : retryAfter,
     });
     default:
       if (status >= 500) return new OrisiftServerError(message, base);

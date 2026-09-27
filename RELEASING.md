@@ -116,9 +116,11 @@ Check three things, because they are what an attacker would change and what a
 mistake would show up in:
 
 - The **version** is the one you intended, and matches the tag you pushed.
-- The **file list** is the nine files this package ships: `package.json`,
-  `README.md`, `LICENSE`, and six under `dist/`. Anything else is a reason to
-  reject.
+- The **file list** is the eleven files this package ships: `package.json`,
+  `README.md`, `LICENSE`, and eight under `dist/`. Anything else is a reason to
+  reject. The count changes when a source module is added or removed, so check it
+  against the release rather than against this sentence; CI asserts the exact
+  list and will fail before anything is staged.
 - The **unpacked size** is in the region of 40 kB. A jump means something was
   added.
 
