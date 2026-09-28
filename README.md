@@ -241,3 +241,31 @@ changes would ship as `/v2` and a new major version of this package.
 
 `X-Orisift-Client` carries the SDK version on every request, so deprecations can
 be planned against real usage rather than guesswork.
+
+## Changes
+
+### 1.1.2
+
+Fixed: a `429` carrying a `Retry-After` longer than the client's remaining
+deadline now raises straight away instead of sleeping until the deadline
+expires.
+
+Orisift's daily unbilled-lookup ceiling clears at 00:00 UTC, so it can ask you
+to wait tens of thousands of seconds. Earlier versions slept for whatever time
+was left in `maxTotalMs`, 30 seconds by default, and then raised anyway,
+because a retry issued at the deadline has no time left to run. The wait could
+never succeed; it was pure latency in front of an error you were going to get.
+
+The error is unchanged and still carries `retryAfterSeconds`, so you can
+schedule a retry for after the reset rather than guess.
+
+Short delays are unaffected. An ordinary `rate_limited` asking for a couple of
+seconds still retries exactly as before, and cancellation still wins over any
+wait.
+
+### 1.1.1
+
+`Retry-After` is read into `OrisiftRateLimitError.retryAfterSeconds`, from the
+header or the JSON body. The idempotency contract in the docs was corrected to
+match the service: a key reused for a *different* request is refused with 409,
+never answered with the earlier result.

@@ -15,7 +15,7 @@ export * from "./types.js";
 export * from "./errors.js";
 
 /** Sent as X-Orisift-Client so deprecations can be planned against real usage. */
-export const SDK_VERSION = "1.1.1";
+export const SDK_VERSION = "1.1.2";
 
 const DEFAULT_BASE_URL = "https://orisift.com";
 
@@ -285,7 +285,8 @@ export class Orisift {
        * credit. Retrying it automatically would bill for the same incomplete
        * answer twice.
        */
-      if (RETRYABLE_STATUS.has(res.status) && attempt < this.#maxRetries) {
+      if (RETRYABLE_STATUS.has(res.status) && attempt < this.#maxRetries
+          && this.#canHonour(retryAfterSeconds(res), deadline)) {
         lastError = error;
         await this.#backoff(attempt, retryAfterSeconds(res), deadline, params.signal);
         continue;
@@ -294,6 +295,29 @@ export class Orisift {
     }
 
     throw lastError ?? new OrisiftTimeoutError("Exhausted every attempt without a response.");
+  }
+
+  /**
+   * Whether a `Retry-After` can be honoured inside this request's deadline.
+   *
+   * A server may legitimately ask for a delay longer than the caller is
+   * willing to wait. Orisift's daily unbilled ceiling does exactly that: it
+   * clears at 00:00 UTC, so `Retry-After` can be tens of thousands of seconds.
+   *
+   * Without this check the client sleeps `min(delay, time left)` and then
+   * finds the deadline spent, so a refusal it could have reported in under a
+   * second instead blocks for the whole budget, 30 seconds by default. The
+   * wait never produces a successful retry, because an attempt issued at the
+   * deadline has no time left to run. It is pure latency.
+   *
+   * Returning false here surfaces the error straight away. `retryAfterSeconds`
+   * is still on it, so a caller can schedule properly instead of guessing.
+   * Short delays are unaffected: an ordinary `rate_limited` asking for two
+   * seconds still retries exactly as before.
+   */
+  #canHonour(retryAfter: number | null, deadline: number): boolean {
+    if (retryAfter === null) return true;
+    return retryAfter * 1000 <= Math.max(0, deadline - Date.now());
   }
 
   async #backoff(attempt: number, retryAfter: number | null, deadline: number, signal?: AbortSignal) {
