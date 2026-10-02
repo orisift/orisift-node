@@ -1,6 +1,6 @@
 {
   "name": "@orisift/sdk",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Official TypeScript SDK for Orisift contact-data validation. Server-side only.",
   "keywords": [
     "orisift",
@@ -31,7 +31,19 @@
       "require": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./supabase": {
+      "types": "./dist/integrations/supabase.d.ts",
+      "import": "./dist/integrations/supabase.js",
+      "require": "./dist/integrations/supabase.js",
+      "default": "./dist/integrations/supabase.js"
+    },
+    "./enforcement": {
+      "types": "./dist/enforcement.d.ts",
+      "import": "./dist/enforcement.js",
+      "require": "./dist/enforcement.js",
+      "default": "./dist/enforcement.js"
+    }
   },
   "browser": false,
   "sideEffects": false,

@@ -48,7 +48,7 @@ jobs:
               console.log(files.join(' '));
             });
           ")"
-          EXPECTED="LICENSE README.md dist/errors.d.ts dist/errors.js dist/index.d.ts dist/index.js dist/retry-after.d.ts dist/retry-after.js dist/types.d.ts dist/types.js package.json"
+          EXPECTED="LICENSE README.md dist/enforcement.d.ts dist/enforcement.js dist/errors.d.ts dist/errors.js dist/index.d.ts dist/index.js dist/integrations/supabase.d.ts dist/integrations/supabase.js dist/retry-after.d.ts dist/retry-after.js dist/types.d.ts dist/types.js package.json"
           if [ "$FILES" != "$EXPECTED" ]; then
             echo "The published file list changed."
             echo "  expected: $EXPECTED"

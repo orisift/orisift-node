@@ -15,7 +15,7 @@ export * from "./types.js";
 export * from "./errors.js";
 
 /** Sent as X-Orisift-Client so deprecations can be planned against real usage. */
-export const SDK_VERSION = "1.1.2";
+export const SDK_VERSION = "1.2.0";
 
 const DEFAULT_BASE_URL = "https://orisift.com";
 
