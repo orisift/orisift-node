@@ -244,6 +244,53 @@ be planned against real usage rather than guesswork.
 
 ## Changes
 
+### 1.3.0 — read this before upgrading
+
+**Some configurations that 1.2.0 accepted now throw at construction.** If your
+handler is built with one of them, your process will fail to start where it
+previously started. That is deliberate, and a minor version number does not by
+itself make it safe to upgrade unattended — check the list below first.
+
+The configurations now rejected:
+
+| configuration | why it is rejected |
+|---|---|
+| `dedupe: {mode: "attempt"}` with no `attemptId`, or a non-function `attemptId` | `attemptId` is a **required** member of that mode. Without it there is no attempt identity to deduplicate on. |
+| `dedupe: {mode: "shared"}` with no `store`, or a `store` without `claim()` | `store` is a **required** member of that mode. |
+| `dedupe: {mode: <anything else>}` | not one of the four documented modes. |
+
+**None of these are a new requirement.** Each member was already required by
+`DedupePolicy` in the type definitions shipped with 1.2.0, and a TypeScript
+build has always rejected them. What changed is that the requirement is now
+enforced at runtime too, so a JavaScript caller gets the same answer as a
+TypeScript one. If your code type-checks against 1.2.0, nothing here can affect
+you.
+
+**Why it was worth a breaking change.** Previously these configurations
+constructed and then failed on every request into the `onUnavailable` path. With
+the common `onUnavailable: "allow"`, that meant **every signup was allowed with
+nothing screened and nothing charged**, returning HTTP 200 in about 12ms. It is
+indistinguishable from a healthy screened allow unless you had registered
+`onUnavailableEvent`. Measured on 1.2.0 while writing an integration from
+scratch. Failing at startup is strictly better than running for months in a
+state where the thing you are paying for is not happening.
+
+Also new: **an allowed-but-unscreened signup is no longer silent.** When
+`onUnavailable` is `"allow"` and no `onUnavailableEvent` is registered, a warning
+goes to `console.warn` naming the reason, at most once per reason per minute.
+
+- The response to Supabase is **unchanged**. Your explicit outage choice is
+  preserved: allow still allows, deny still denies.
+- Nothing operational reaches the end user. The warning is server-side only, and
+  the response body carries no reason, no vendor name and no detail.
+- The line contains **no identifiers, credentials or payload**: no API key, hook
+  secret, email address, user id, webhook id or request body.
+- Register `onUnavailableEvent` and the warning stops, because then you are
+  already being told.
+
+Upgrading: if you use TypeScript, nothing to do. If you use plain JavaScript,
+check your `dedupe` option against the table above before deploying.
+
 ### 1.1.2
 
 Fixed: a `429` carrying a `Retry-After` longer than the client's remaining

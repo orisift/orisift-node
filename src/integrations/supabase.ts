@@ -565,6 +565,60 @@ export function createBeforeUserCreatedHandler(opts: BeforeUserCreatedOptions) {
       + "how fresh your evidence is. See the identity contract in this file.",
     );
   }
+
+  /*
+   * A mode whose required parts are missing can never work, so it must not
+   * construct.
+   *
+   * Presence of `dedupe` was already checked. Its SHAPE was not, and the gap is
+   * worse than it sounds because of where the failure lands. `{mode:"attempt"}`
+   * with no `attemptId` is a TypeScript error and perfectly valid JavaScript;
+   * it constructed, then failed at request time into `dedupe_unavailable`, and
+   * with the common `onUnavailable: "allow"` every signup was allowed with
+   * nothing screened and nothing charged, returning HTTP 200 in 12ms. A
+   * developer watching status codes sees working software. Measured on the
+   * published 1.2.0 package while writing the integration path.
+   *
+   * These checks are deliberately limited to what is LOCALLY DETECTABLE: a
+   * missing callback, a missing store, an unknown mode. They are facts about
+   * the options object, knowable before any request. Nothing here infers
+   * anything about the network, the API key or the server's opinion of a value
+   * it has not seen yet.
+   */
+  switch (opts.dedupe.mode) {
+    case "attempt":
+      if (typeof (opts.dedupe as { attemptId?: unknown }).attemptId !== "function") {
+        throw new Error(
+          'dedupe {mode:"attempt"} requires attemptId, a function returning the attempt '
+          + "identity for a payload (or null when it has none). Without it there is no "
+          + "identity to deduplicate on, so every delivery would be unscreened rather "
+          + "than deduplicated. Supply attemptId, or choose another mode: "
+          + '"shared" (bounded, across instances), "single-process" (bounded, one process), '
+          + 'or "none" (screen every delivery and be charged for it).',
+        );
+      }
+      break;
+    case "shared":
+      if (!(opts.dedupe as { store?: { claim?: unknown } }).store
+        || typeof (opts.dedupe as { store?: { claim?: unknown } }).store?.claim !== "function") {
+        throw new Error(
+          'dedupe {mode:"shared"} requires store, an AttemptKeyStore with a claim(key, '
+          + "candidate, ttlMs) method. Without shared storage there is nothing to "
+          + 'coordinate across instances; use "single-process" if one process is all you '
+          + "have.",
+        );
+      }
+      break;
+    case "single-process":
+    case "none":
+      break;
+    default:
+      throw new Error(
+        `dedupe mode "${String((opts.dedupe as { mode?: unknown }).mode)}" is not recognised. `
+        + 'Valid modes: "attempt", "shared", "single-process", "none".',
+      );
+  }
+
   const dedupe = opts.dedupe;
   const windowMs = ("windowMs" in dedupe && dedupe.windowMs) || DEFAULT_DEDUPE_WINDOW_MS;
 
@@ -576,6 +630,15 @@ export function createBeforeUserCreatedHandler(opts: BeforeUserCreatedOptions) {
    * it, so two deliveries a millisecond apart cannot land either side of an
    * edge, which a bucket allows and which was the flaw in the previous design.
    */
+  /*
+   * Last time each unavailable reason was warned about, per handler.
+   *
+   * Per handler rather than module-global for the same reason `local` is: two
+   * handlers in one process may belong to different accounts, and one being
+   * noisy must not silence the other.
+   */
+  const warnedAt = new Map<string, number>();
+
   const local = new Map<string, { value: string; expires: number }>();
   const localStore: AttemptKeyStore = {
     async claim(key, candidate, ttlMs) {
@@ -676,6 +739,46 @@ ${canonicalBody}`)
           dedupeMode: dedupe.mode, dedupeShared, dedupeDegraded,
         });
       } catch { /* alerting must not break signup */ }
+
+      /*
+       * An allowed-but-unscreened signup must never be silent.
+       *
+       * Allowing it can be entirely correct: `onUnavailable: "allow"` is the
+       * caller's deliberate choice to let people in when we cannot screen, and
+       * this does NOT second-guess it. The response to Supabase is unchanged,
+       * and success is still success.
+       *
+       * What was wrong is that with no `onUnavailableEvent` registered, the one
+       * thing the customer bought silently did not happen: HTTP 200, empty body,
+       * nothing screened, nothing charged, no trace anywhere. Measured on the
+       * published package, a missing `attemptId` produced exactly that in 12ms,
+       * and it is indistinguishable from a healthy screened allow.
+       *
+       * So when nobody is listening, say it on stderr. Once per distinct reason
+       * per minute, because a flood of identical lines during an outage is how a
+       * warning gets filtered out and ignored.
+       *
+       * Deliberately NOT in the response body: the end user is told nothing
+       * operational. A signup form is not the place to disclose that a vendor is
+       * unreachable or that a config value is wrong.
+       */
+      if (applied === "allow" && !opts.onUnavailableEvent) {
+        const now = Date.now();
+        const last = warnedAt.get(reason) ?? 0;
+        if (now - last > 60_000) {
+          warnedAt.set(reason, now);
+          const where = typeof console !== "undefined" && typeof console.warn === "function"
+            ? console.warn.bind(console) : null;
+          where?.(
+            `[orisift] SIGNUP ALLOWED WITHOUT SCREENING. reason=${reason}`
+            + `${status ? ` status=${status}` : ""} detail=${detail}`
+            + ` — onUnavailable is "allow", so this signup proceeded unscreened and was not`
+            + ` charged. This is your configured behaviour, not a failure to act on it;`
+            + ` register onUnavailableEvent to route these somewhere you watch, and this`
+            + ` line will stop. Further identical warnings are suppressed for 60s.`,
+          );
+        }
+      }
 
       return applied === "deny"
         ? DENY(opts.unavailableMessage ?? DEFAULT_UNAVAILABLE_MESSAGE, 503)
